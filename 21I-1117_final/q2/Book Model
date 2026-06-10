@@ -1,0 +1,8 @@
+{
+    title:String,
+    author:String,
+    isbn:String,
+    category:String,
+    totalCopies:Number,
+    availableCopies:Number
+}
