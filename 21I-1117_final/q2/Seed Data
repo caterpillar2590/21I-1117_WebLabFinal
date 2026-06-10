@@ -1,0 +1,21 @@
+const bcrypt = require("bcryptjs");
+
+await User.create({
+    name:"Admin",
+    email:"admin@library.com",
+    password:await bcrypt.hash(
+        "Admin@1234",
+        10
+    ),
+    role:"admin"
+});
+
+await User.create({
+    name:"Librarian",
+    email:"librarian@library.com",
+    password:await bcrypt.hash(
+        "Lib@1234",
+        10
+    ),
+    role:"librarian"
+});
