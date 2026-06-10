@@ -1,0 +1,6 @@
+router.post(
+"/borrow",
+auth,
+authorize("member"),
+borrowBook
+);
