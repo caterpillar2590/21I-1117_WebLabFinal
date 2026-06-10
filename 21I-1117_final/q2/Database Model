@@ -1,0 +1,14 @@
+{
+    name: String,
+    email: String,
+    password: String,
+    role:{
+        type:String,
+        enum:["member","librarian","admin"]
+    },
+    status:{
+        type:String,
+        enum:["active","suspended"],
+        default:"active"
+    }
+}
