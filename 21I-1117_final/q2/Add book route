@@ -1,0 +1,6 @@
+router.post(
+"/catalog",
+auth,
+authorize("librarian","admin"),
+addBook
+);
