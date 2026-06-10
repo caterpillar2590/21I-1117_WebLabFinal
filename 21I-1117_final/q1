@@ -1,0 +1,818 @@
+import { useState, useEffect, useContext, createContext, useCallback, useRef } from "react";
+
+// ─── Global Context ───────────────────────────────────────────────────────────
+const DashboardContext = createContext(null);
+
+function generateChartData(timeRange) {
+  const configs = {
+    "12months": { labels: ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"], count: 12 },
+    "30days":   { labels: Array.from({length:30},(_,i)=>`D${i+1}`), count: 30 },
+    "7days":    { labels: ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"], count: 7 },
+    "24hours":  { labels: Array.from({length:24},(_,i)=>`${i}h`), count: 24 },
+  };
+  const cfg = configs[timeRange] || configs["12months"];
+  return {
+    labels: cfg.labels,
+    visitors: Array.from({length:cfg.count},()=>Math.floor(Math.random()*8000+2000)),
+    pageviews: Array.from({length:cfg.count},()=>Math.floor(Math.random()*15000+5000)),
+    activeUsers: Array.from({length:cfg.count},()=>Math.floor(Math.random()*3000+500)),
+  };
+}
+
+function DashboardProvider({ children }) {
+  const [timeRange, setTimeRange] = useState("12months");
+  const [productsList, setProductsList] = useState([]);
+  const [logisticsFilter, setLogisticsFilter] = useState("all");
+  const [selectedProductId, setSelectedProductId] = useState(null);
+  const [chartData, setChartData] = useState(() => generateChartData("12months"));
+  const [notification, setNotification] = useState(null);
+
+  const updateTimeRange = useCallback((range) => {
+    setTimeRange(range);
+    setChartData(generateChartData(range));
+  }, []);
+
+  const showNotification = useCallback((msg, type = "success") => {
+    setNotification({ msg, type });
+    setTimeout(() => setNotification(null), 3500);
+  }, []);
+
+  return (
+    <DashboardContext.Provider value={{
+      timeRange, updateTimeRange, chartData,
+      productsList, setProductsList,
+      logisticsFilter, setLogisticsFilter,
+      selectedProductId, setSelectedProductId,
+      notification, showNotification,
+    }}>
+      {children}
+    </DashboardContext.Provider>
+  );
+}
+
+const useDashboard = () => useContext(DashboardContext);
+
+// ─── Router ───────────────────────────────────────────────────────────────────
+function useRouter() {
+  const [path, setPath] = useState(() => window.location.hash.slice(1) || "/");
+  useEffect(() => {
+    const handler = () => setPath(window.location.hash.slice(1) || "/");
+    window.addEventListener("hashchange", handler);
+    return () => window.removeEventListener("hashchange", handler);
+  }, []);
+  const navigate = (to) => { window.location.hash = to; };
+  return { path, navigate };
+}
+
+// ─── Logistics Data ───────────────────────────────────────────────────────────
+const SHIPMENTS = [
+  { id:"SHP-001", product:"Wireless Headphones", origin:"New York", destination:"Los Angeles", carrier:"FedEx", status:"Delivered", eta:"2025-06-01", weight:"0.8kg" },
+  { id:"SHP-002", product:"Laptop Pro 15\"", origin:"Chicago", destination:"Houston", carrier:"UPS", status:"In Transit", eta:"2025-06-12", weight:"2.1kg" },
+  { id:"SHP-003", product:"Smartphone X12", origin:"Seattle", destination:"Miami", carrier:"DHL", status:"Delayed", eta:"2025-06-15", weight:"0.3kg" },
+  { id:"SHP-004", product:"Mechanical Keyboard", origin:"Boston", destination:"Phoenix", carrier:"USPS", status:"Delivered", eta:"2025-06-03", weight:"1.2kg" },
+  { id:"SHP-005", product:"4K Monitor", origin:"Denver", destination:"Atlanta", carrier:"FedEx", status:"Delayed", eta:"2025-06-18", weight:"6.5kg" },
+  { id:"SHP-006", product:"USB-C Hub", origin:"Portland", destination:"Dallas", carrier:"UPS", status:"In Transit", eta:"2025-06-11", weight:"0.4kg" },
+  { id:"SHP-007", product:"Ergonomic Chair", origin:"San Francisco", destination:"Chicago", carrier:"Amazon", status:"Delivered", eta:"2025-06-05", weight:"18kg" },
+  { id:"SHP-008", product:"Webcam HD", origin:"Austin", destination:"New York", carrier:"DHL", status:"In Transit", eta:"2025-06-13", weight:"0.5kg" },
+  { id:"SHP-009", product:"Gaming Mouse", origin:"Las Vegas", destination:"Seattle", carrier:"FedEx", status:"Delayed", eta:"2025-06-20", weight:"0.2kg" },
+  { id:"SHP-010", product:"External SSD 1TB", origin:"Detroit", destination:"Boston", carrier:"USPS", status:"Delivered", eta:"2025-06-07", weight:"0.15kg" },
+];
+
+// ─── Shared UI Components ─────────────────────────────────────────────────────
+const STATUS_COLORS = {
+  "Delivered":  { bg:"#eaf3de", color:"#3b6d11", border:"#97c459" },
+  "In Transit": { bg:"#e6f1fb", color:"#185fa5", border:"#85b7eb" },
+  "Delayed":    { bg:"#fcebeb", color:"#a32d2d", border:"#f09595" },
+};
+
+function Badge({ status }) {
+  const s = STATUS_COLORS[status] || {};
+  return (
+    <span style={{ background:s.bg, color:s.color, border:`1px solid ${s.border}`, borderRadius:6, padding:"2px 10px", fontSize:12, fontWeight:500, whiteSpace:"nowrap" }}>
+      {status}
+    </span>
+  );
+}
+
+function Spinner() {
+  return (
+    <div style={{ display:"flex", alignItems:"center", justifyContent:"center", padding:"3rem" }}>
+      <div style={{ width:32, height:32, border:"3px solid var(--color-border-tertiary)", borderTop:"3px solid #534AB7", borderRadius:"50%", animation:"spin 0.8s linear infinite" }} />
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+    </div>
+  );
+}
+
+function GlobalNotification() {
+  const { notification } = useDashboard();
+  if (!notification) return null;
+  const colors = notification.type === "success"
+    ? { bg:"#eaf3de", color:"#3b6d11", border:"#97c459" }
+    : { bg:"#fcebeb", color:"#a32d2d", border:"#f09595" };
+  return (
+    <div style={{ position:"fixed", top:20, right:20, zIndex:9999, background:colors.bg, color:colors.color, border:`1px solid ${colors.border}`, borderRadius:10, padding:"12px 20px", fontSize:14, fontWeight:500, boxShadow:"0 4px 16px rgba(0,0,0,0.08)", maxWidth:340, animation:"slideIn 0.3s ease" }}>
+      <style>{`@keyframes slideIn{from{transform:translateX(40px);opacity:0}to{transform:translateX(0);opacity:1}}`}</style>
+      {notification.msg}
+    </div>
+  );
+}
+
+// ─── Sidebar Navigation ────────────────────────────────────────────────────────
+function Sidebar({ path, navigate }) {
+  const navItems = [
+    { href:"/", icon:"ti-chart-bar", label:"Analytics" },
+    { href:"/products", icon:"ti-box", label:"Products" },
+    { href:"/add-product", icon:"ti-circle-plus", label:"Add Product" },
+    { href:"/ecommerce", icon:"ti-shopping-cart", label:"E-commerce" },
+    { href:"/logistics", icon:"ti-truck", label:"Logistics" },
+  ];
+  return (
+    <aside style={{ width:220, minHeight:"100vh", background:"#1a1730", display:"flex", flexDirection:"column", padding:"0 0 2rem" }}>
+      <div style={{ padding:"1.5rem 1.25rem 1rem", borderBottom:"1px solid rgba(255,255,255,0.08)" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+          <div style={{ width:32, height:32, background:"#534AB7", borderRadius:8, display:"flex", alignItems:"center", justifyContent:"center" }}>
+            <i className="ti ti-dashboard" style={{ color:"#fff", fontSize:18 }} aria-hidden="true" />
+          </div>
+          <div>
+            <div style={{ color:"#fff", fontWeight:500, fontSize:15, lineHeight:1.2 }}>AdminOS</div>
+            <div style={{ color:"rgba(255,255,255,0.45)", fontSize:11 }}>Enterprise</div>
+          </div>
+        </div>
+      </div>
+      <nav style={{ flex:1, padding:"1rem 0.75rem" }}>
+        {navItems.map(item => {
+          const active = path === item.href || (item.href !== "/" && path.startsWith(item.href));
+          return (
+            <button key={item.href} onClick={() => navigate(item.href)}
+              style={{ display:"flex", alignItems:"center", gap:10, width:"100%", padding:"10px 12px", marginBottom:2, borderRadius:8, border:"none", background: active ? "rgba(83,74,183,0.35)" : "transparent", color: active ? "#bfb9f5" : "rgba(255,255,255,0.6)", fontSize:14, fontWeight: active ? 500 : 400, cursor:"pointer", transition:"all 0.15s", textAlign:"left" }}>
+              <i className={`ti ${item.icon}`} style={{ fontSize:18 }} aria-hidden="true" />
+              {item.label}
+            </button>
+          );
+        })}
+      </nav>
+      <div style={{ padding:"0 0.75rem" }}>
+        <div style={{ borderTop:"1px solid rgba(255,255,255,0.08)", paddingTop:"1rem" }}>
+          <div style={{ display:"flex", alignItems:"center", gap:10, padding:"8px 12px" }}>
+            <div style={{ width:32, height:32, borderRadius:"50%", background:"#534AB7", display:"flex", alignItems:"center", justifyContent:"center", color:"#fff", fontSize:13, fontWeight:500 }}>A</div>
+            <div>
+              <div style={{ color:"rgba(255,255,255,0.85)", fontSize:13, fontWeight:500 }}>Admin User</div>
+              <div style={{ color:"rgba(255,255,255,0.4)", fontSize:11 }}>admin@corp.io</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+// ─── Analytics Screen ─────────────────────────────────────────────────────────
+function AnalyticsScreen({ navigate }) {
+  const { timeRange, updateTimeRange, chartData, selectedProductId, setSelectedProductId, productsList, setProductsList } = useDashboard();
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const barRef = useRef(null);
+  const lineRef = useRef(null);
+  const barChart = useRef(null);
+  const lineChart = useRef(null);
+
+  useEffect(() => {
+    fetch("https://dummyjson.com/products?limit=7")
+      .then(r => r.json())
+      .then(d => {
+        setOrders(d.products || []);
+        if (!productsList.length) setProductsList(d.products || []);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    if (!barRef.current || !window.Chart) return;
+    if (barChart.current) barChart.current.destroy();
+    barChart.current = new window.Chart(barRef.current, {
+      type:"bar",
+      data:{ labels:chartData.labels, datasets:[
+        { label:"Visitors", data:chartData.visitors, backgroundColor:"rgba(83,74,183,0.75)", borderRadius:4 },
+        { label:"Pageviews", data:chartData.pageviews, backgroundColor:"rgba(29,158,117,0.6)", borderRadius:4 },
+      ]},
+      options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:false } }, scales:{ x:{ grid:{ display:false }, ticks:{ font:{size:11}, color:"#888" } }, y:{ grid:{ color:"rgba(0,0,0,0.05)" }, ticks:{ font:{size:11}, color:"#888" } } } }
+    });
+    return () => { if (barChart.current) barChart.current.destroy(); };
+  }, [chartData]);
+
+  useEffect(() => {
+    if (!lineRef.current || !window.Chart) return;
+    if (lineChart.current) lineChart.current.destroy();
+    lineChart.current = new window.Chart(lineRef.current, {
+      type:"line",
+      data:{ labels:chartData.labels, datasets:[{
+        label:"Active Users", data:chartData.activeUsers,
+        borderColor:"#534AB7", backgroundColor:"rgba(83,74,183,0.08)",
+        borderWidth:2, fill:true, tension:0.4, pointRadius:3, pointBackgroundColor:"#534AB7",
+      }]},
+      options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:false } }, scales:{ x:{ grid:{ display:false }, ticks:{ font:{size:11}, color:"#888" } }, y:{ grid:{ color:"rgba(0,0,0,0.05)" }, ticks:{ font:{size:11}, color:"#888" } } } }
+    });
+    return () => { if (lineChart.current) lineChart.current.destroy(); };
+  }, [chartData]);
+
+  const kpis = [
+    { label:"Unique Visitors", value: chartData.visitors.reduce((a,b)=>a+b,0).toLocaleString(), icon:"ti-users", color:"#534AB7", bg:"#eeedfe" },
+    { label:"Total Pageviews", value: chartData.pageviews.reduce((a,b)=>a+b,0).toLocaleString(), icon:"ti-eye", color:"#1d9e75", bg:"#e1f5ee" },
+    { label:"Bounce Rate", value: (Math.random()*30+35).toFixed(1)+"%", icon:"ti-trending-down", color:"#d85a30", bg:"#faece7" },
+    { label:"Visit Duration", value: `${Math.floor(Math.random()*3+2)}m ${Math.floor(Math.random()*59)}s`, icon:"ti-clock", color:"#185fa5", bg:"#e6f1fb" },
+  ];
+
+  const timeRanges = [
+    { key:"12months", label:"12 months" },
+    { key:"30days", label:"30 days" },
+    { key:"7days", label:"7 days" },
+    { key:"24hours", label:"24 hours" },
+  ];
+
+  const handleOrderClick = (product) => {
+    setSelectedProductId(product.id);
+    navigate("/products");
+  };
+
+  return (
+    <div style={{ padding:"2rem", maxWidth:1100 }}>
+      <h2 style={{ margin:"0 0 0.25rem", fontSize:22, fontWeight:500, color:"var(--color-text-primary)" }}>Analytics Dashboard</h2>
+      <p style={{ margin:"0 0 2rem", color:"var(--color-text-secondary)", fontSize:14 }}>Overview of site performance and key metrics</p>
+
+      {/* KPI Cards */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(200px,1fr))", gap:16, marginBottom:"2rem" }}>
+        {kpis.map(k => (
+          <div key={k.label} style={{ background:"var(--color-background-primary)", border:"0.5px solid var(--color-border-tertiary)", borderRadius:12, padding:"1.25rem" }}>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8 }}>
+              <span style={{ fontSize:13, color:"var(--color-text-secondary)" }}>{k.label}</span>
+              <span style={{ background:k.bg, color:k.color, width:32, height:32, borderRadius:8, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                <i className={`ti ${k.icon}`} style={{ fontSize:16 }} aria-hidden="true" />
+              </span>
+            </div>
+            <div style={{ fontSize:24, fontWeight:500, color:"var(--color-text-primary)" }}>{k.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Timeline Filter */}
+      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:"1.5rem" }}>
+        <span style={{ fontSize:13, color:"var(--color-text-secondary)", marginRight:4 }}>Period:</span>
+        {timeRanges.map(t => (
+          <button key={t.key} onClick={() => updateTimeRange(t.key)}
+            style={{ padding:"6px 14px", borderRadius:20, border: timeRange===t.key ? "1px solid #534AB7" : "0.5px solid var(--color-border-secondary)", background: timeRange===t.key ? "#534AB7" : "var(--color-background-primary)", color: timeRange===t.key ? "#fff" : "var(--color-text-secondary)", fontSize:13, fontWeight: timeRange===t.key ? 500 : 400, cursor:"pointer", transition:"all 0.15s" }}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Charts */}
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:"2rem" }}>
+        <div style={{ background:"var(--color-background-primary)", border:"0.5px solid var(--color-border-tertiary)", borderRadius:12, padding:"1.25rem" }}>
+          <div style={{ display:"flex", gap:16, marginBottom:12 }}>
+            <span style={{ display:"flex", alignItems:"center", gap:6, fontSize:12, color:"var(--color-text-secondary)" }}>
+              <span style={{ width:10, height:10, borderRadius:2, background:"rgba(83,74,183,0.75)", display:"inline-block" }} /> Visitors
+            </span>
+            <span style={{ display:"flex", alignItems:"center", gap:6, fontSize:12, color:"var(--color-text-secondary)" }}>
+              <span style={{ width:10, height:10, borderRadius:2, background:"rgba(29,158,117,0.6)", display:"inline-block" }} /> Pageviews
+            </span>
+          </div>
+          <div style={{ position:"relative", height:220 }}>
+            <canvas ref={barRef} role="img" aria-label="Bar chart showing visitors and pageviews over time" />
+          </div>
+        </div>
+        <div style={{ background:"var(--color-background-primary)", border:"0.5px solid var(--color-border-tertiary)", borderRadius:12, padding:"1.25rem" }}>
+          <div style={{ marginBottom:12 }}>
+            <span style={{ display:"flex", alignItems:"center", gap:6, fontSize:12, color:"var(--color-text-secondary)" }}>
+              <span style={{ width:10, height:10, borderRadius:2, background:"#534AB7", display:"inline-block" }} /> Active Users
+            </span>
+          </div>
+          <div style={{ position:"relative", height:220 }}>
+            <canvas ref={lineRef} role="img" aria-label="Line chart showing active users over time" />
+          </div>
+        </div>
+      </div>
+
+      {/* Recent Orders Table */}
+      <div style={{ background:"var(--color-background-primary)", border:"0.5px solid var(--color-border-tertiary)", borderRadius:12, overflow:"hidden" }}>
+        <div style={{ padding:"1rem 1.25rem", borderBottom:"0.5px solid var(--color-border-tertiary)", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+          <h3 style={{ margin:0, fontSize:15, fontWeight:500, color:"var(--color-text-primary)" }}>Recent orders</h3>
+          <span style={{ fontSize:13, color:"var(--color-text-secondary)" }}>{orders.length} items</span>
+        </div>
+        {loading ? <Spinner /> : (
+          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
+            <thead>
+              <tr style={{ background:"var(--color-background-secondary)" }}>
+                {["Product","Category","Price","Stock","Rating"].map(h=>(
+                  <th key={h} style={{ padding:"10px 16px", textAlign:"left", color:"var(--color-text-secondary)", fontWeight:500, fontSize:12, borderBottom:"0.5px solid var(--color-border-tertiary)" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {orders.map((p, i) => (
+                <tr key={p.id} style={{ borderBottom:"0.5px solid var(--color-border-tertiary)", background: selectedProductId===p.id ? "#eeedfe" : "transparent", transition:"background 0.2s" }}>
+                  <td style={{ padding:"12px 16px" }}>
+                    <button onClick={() => handleOrderClick(p)} style={{ background:"none", border:"none", color:"#534AB7", fontWeight:500, cursor:"pointer", fontSize:13, padding:0, textDecoration:"underline", textUnderlineOffset:2 }}>
+                      {p.title}
+                    </button>
+                  </td>
+                  <td style={{ padding:"12px 16px", color:"var(--color-text-secondary)" }}>{p.category}</td>
+                  <td style={{ padding:"12px 16px", fontWeight:500 }}>${p.price?.toFixed(2)}</td>
+                  <td style={{ padding:"12px 16px", color: p.stock < 20 ? "#d85a30" : "var(--color-text-primary)" }}>{p.stock}</td>
+                  <td style={{ padding:"12px 16px" }}>
+                    <span style={{ color:"#ba7517", fontSize:12 }}>★ {p.rating?.toFixed(1)}</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Products Screen ──────────────────────────────────────────────────────────
+function ProductsScreen({ navigate }) {
+  const { productsList, setProductsList, selectedProductId, setSelectedProductId, showNotification } = useDashboard();
+  const [search, setSearch] = useState("");
+  const [displayed, setDisplayed] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [editProduct, setEditProduct] = useState(null);
+  const searchTimeout = useRef(null);
+  const highlightRef = useRef(null);
+
+  useEffect(() => {
+    if (!productsList.length) {
+      setLoading(true);
+      fetch("https://dummyjson.com/products?limit=30")
+        .then(r=>r.json())
+        .then(d=>{ setProductsList(d.products||[]); setDisplayed(d.products||[]); setLoading(false); })
+        .catch(()=>setLoading(false));
+    } else {
+      setDisplayed(productsList);
+    }
+  }, [productsList]);
+
+  useEffect(() => {
+    if (selectedProductId && highlightRef.current) {
+      setTimeout(() => highlightRef.current?.scrollIntoView({ behavior:"smooth", block:"center" }), 200);
+    }
+  }, [selectedProductId, displayed]);
+
+  const handleSearch = (q) => {
+    setSearch(q);
+    clearTimeout(searchTimeout.current);
+    if (!q.trim()) { setDisplayed(productsList); return; }
+    searchTimeout.current = setTimeout(() => {
+      setLoading(true);
+      fetch(`https://dummyjson.com/products/search?q=${encodeURIComponent(q)}`)
+        .then(r=>r.json())
+        .then(d=>{ setDisplayed(d.products||[]); setLoading(false); })
+        .catch(()=>setLoading(false));
+    }, 350);
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm("Delete this product?")) return;
+    await fetch(`https://dummyjson.com/products/${id}`, { method:"DELETE" });
+    setProductsList(prev => prev.filter(p=>p.id!==id));
+    setDisplayed(prev => prev.filter(p=>p.id!==id));
+    showNotification("Product deleted.");
+  };
+
+  return (
+    <div style={{ padding:"2rem", maxWidth:1100 }}>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:"0.25rem" }}>
+        <h2 style={{ margin:0, fontSize:22, fontWeight:500, color:"var(--color-text-primary)" }}>Products</h2>
+        <button onClick={() => navigate("/add-product")} style={{ display:"flex", alignItems:"center", gap:6, background:"#534AB7", color:"#fff", border:"none", borderRadius:8, padding:"8px 16px", fontSize:13, fontWeight:500, cursor:"pointer" }}>
+          <i className="ti ti-plus" aria-hidden="true" /> Add product
+        </button>
+      </div>
+      <p style={{ margin:"0 0 1.5rem", color:"var(--color-text-secondary)", fontSize:14 }}>{displayed.length} products found</p>
+
+      {/* Search */}
+      <div style={{ position:"relative", marginBottom:"1.5rem", maxWidth:400 }}>
+        <i className="ti ti-search" style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", color:"var(--color-text-secondary)", fontSize:16 }} aria-hidden="true" />
+        <input value={search} onChange={e=>handleSearch(e.target.value)} placeholder="Search products…"
+          style={{ width:"100%", padding:"10px 12px 10px 36px", borderRadius:8, border:"0.5px solid var(--color-border-secondary)", background:"var(--color-background-primary)", color:"var(--color-text-primary)", fontSize:14, boxSizing:"border-box" }} />
+      </div>
+
+      {loading ? <Spinner /> : (
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(240px,1fr))", gap:16 }}>
+          {displayed.map(p => {
+            const isSelected = selectedProductId === p.id;
+            return (
+              <div key={p.id} ref={isSelected ? highlightRef : null}
+                style={{ background:"var(--color-background-primary)", border: isSelected ? "2px solid #534AB7" : "0.5px solid var(--color-border-tertiary)", borderRadius:12, overflow:"hidden", transition:"box-shadow 0.15s", position:"relative" }}>
+                {isSelected && <div style={{ position:"absolute", top:8, right:8, background:"#534AB7", color:"#fff", borderRadius:4, fontSize:10, fontWeight:500, padding:"2px 8px" }}>Selected</div>}
+                <div style={{ height:140, background:"#f5f5f5", display:"flex", alignItems:"center", justifyContent:"center", overflow:"hidden" }}>
+                  <img src={p.thumbnail} alt={p.title} style={{ maxWidth:"100%", maxHeight:"100%", objectFit:"cover" }} loading="lazy" />
+                </div>
+                <div style={{ padding:"0.875rem" }}>
+                  <div style={{ fontSize:13, fontWeight:500, color:"var(--color-text-primary)", marginBottom:4, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{p.title}</div>
+                  <div style={{ fontSize:12, color:"var(--color-text-secondary)", marginBottom:8 }}>{p.category}</div>
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
+                    <span style={{ fontWeight:500, fontSize:15, color:"#534AB7" }}>${p.price?.toFixed(2)}</span>
+                    <span style={{ fontSize:12, color: p.stock<20?"#a32d2d":"var(--color-text-secondary)" }}>Stock: {p.stock}</span>
+                  </div>
+                  <div style={{ display:"flex", gap:8 }}>
+                    <button onClick={() => { setEditProduct(p); setSelectedProductId(p.id); }}
+                      style={{ flex:1, padding:"6px 0", borderRadius:6, border:"0.5px solid #534AB7", background:"transparent", color:"#534AB7", fontSize:12, fontWeight:500, cursor:"pointer" }}>
+                      <i className="ti ti-edit" aria-hidden="true" /> Edit
+                    </button>
+                    <button onClick={() => handleDelete(p.id)}
+                      style={{ padding:"6px 10px", borderRadius:6, border:"0.5px solid #f09595", background:"transparent", color:"#a32d2d", fontSize:12, cursor:"pointer" }}>
+                      <i className="ti ti-trash" aria-hidden="true" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {editProduct && <EditModal product={editProduct} onClose={() => setEditProduct(null)} />}
+    </div>
+  );
+}
+
+// ─── Edit Modal ───────────────────────────────────────────────────────────────
+function EditModal({ product, onClose }) {
+  const { setProductsList, showNotification } = useDashboard();
+  const [form, setForm] = useState({ title:product.title, category:product.category, price:product.price, stock:product.stock });
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch(`https://dummyjson.com/products/${product.id}`, {
+        method:"PATCH",
+        headers:{ "Content-Type":"application/json" },
+        body:JSON.stringify({ title:form.title, category:form.category, price:Number(form.price), stock:Number(form.stock) }),
+      });
+      const updated = await res.json();
+      setProductsList(prev => prev.map(p => p.id===product.id ? { ...p, ...updated } : p));
+      showNotification(`"${form.title}" updated successfully.`);
+      onClose();
+    } catch { showNotification("Failed to update product.", "error"); }
+    setSaving(false);
+  };
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.45)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center" }}>
+      <div style={{ background:"var(--color-background-primary)", borderRadius:14, width:420, padding:"1.5rem", border:"0.5px solid var(--color-border-tertiary)" }}>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:"1.25rem" }}>
+          <h3 style={{ margin:0, fontSize:16, fontWeight:500 }}>Edit product</h3>
+          <button onClick={onClose} style={{ background:"none", border:"none", cursor:"pointer", color:"var(--color-text-secondary)", fontSize:20, lineHeight:1 }}><i className="ti ti-x" aria-hidden="true" /></button>
+        </div>
+        {[["Title","title","text"],["Category","category","text"],["Price","price","number"],["Stock","stock","number"]].map(([label,key,type])=>(
+          <div key={key} style={{ marginBottom:12 }}>
+            <label style={{ display:"block", fontSize:12, color:"var(--color-text-secondary)", marginBottom:4 }}>{label}</label>
+            <input type={type} value={form[key]} onChange={e=>setForm(f=>({...f,[key]:e.target.value}))}
+              style={{ width:"100%", padding:"8px 10px", borderRadius:7, border:"0.5px solid var(--color-border-secondary)", background:"var(--color-background-primary)", color:"var(--color-text-primary)", fontSize:14, boxSizing:"border-box" }} />
+          </div>
+        ))}
+        <div style={{ display:"flex", gap:10, marginTop:"1.25rem" }}>
+          <button onClick={onClose} style={{ flex:1, padding:"9px 0", borderRadius:7, border:"0.5px solid var(--color-border-secondary)", background:"transparent", color:"var(--color-text-secondary)", cursor:"pointer", fontSize:14 }}>Cancel</button>
+          <button onClick={handleSave} disabled={saving}
+            style={{ flex:1, padding:"9px 0", borderRadius:7, border:"none", background:"#534AB7", color:"#fff", cursor:"pointer", fontSize:14, fontWeight:500, opacity:saving?0.7:1 }}>
+            {saving ? "Saving…" : "Save changes"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Add Product Screen ───────────────────────────────────────────────────────
+function AddProductScreen({ navigate }) {
+  const { setProductsList, showNotification } = useDashboard();
+  const [form, setForm] = useState({ title:"", category:"", price:"", stock:"", description:"" });
+  const [saving, setSaving] = useState(false);
+  const [errors, setErrors] = useState({});
+
+  const validate = () => {
+    const e = {};
+    if (!form.title.trim()) e.title = "Title is required";
+    if (!form.category.trim()) e.category = "Category is required";
+    if (!form.price || isNaN(Number(form.price))) e.price = "Valid price required";
+    if (!form.stock || isNaN(Number(form.stock))) e.stock = "Valid stock required";
+    return e;
+  };
+
+  const handleSubmit = async () => {
+    const e = validate();
+    if (Object.keys(e).length) { setErrors(e); return; }
+    setSaving(true);
+    try {
+      const res = await fetch("https://dummyjson.com/products/add", {
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        body:JSON.stringify({ title:form.title, category:form.category, price:Number(form.price), stock:Number(form.stock), description:form.description }),
+      });
+      const newProduct = await res.json();
+      setProductsList(prev => [{ ...newProduct, id: Date.now() }, ...prev]);
+      showNotification(`"${form.title}" added successfully.`);
+      navigate("/products");
+    } catch { showNotification("Failed to add product.", "error"); }
+    setSaving(false);
+  };
+
+  const fields = [
+    { label:"Product title", key:"title", type:"text", placeholder:"e.g. Wireless Headphones Pro" },
+    { label:"Category", key:"category", type:"text", placeholder:"e.g. electronics" },
+    { label:"Price ($)", key:"price", type:"number", placeholder:"0.00" },
+    { label:"Stock quantity", key:"stock", type:"number", placeholder:"0" },
+  ];
+
+  return (
+    <div style={{ padding:"2rem", maxWidth:600 }}>
+      <button onClick={() => navigate("/products")} style={{ display:"flex", alignItems:"center", gap:6, background:"none", border:"none", color:"var(--color-text-secondary)", fontSize:13, cursor:"pointer", marginBottom:"1rem", padding:0 }}>
+        <i className="ti ti-arrow-left" aria-hidden="true" /> Back to products
+      </button>
+      <h2 style={{ margin:"0 0 0.25rem", fontSize:22, fontWeight:500, color:"var(--color-text-primary)" }}>Add product</h2>
+      <p style={{ margin:"0 0 2rem", color:"var(--color-text-secondary)", fontSize:14 }}>New product will sync immediately to the products grid and analytics table.</p>
+
+      <div style={{ background:"var(--color-background-primary)", border:"0.5px solid var(--color-border-tertiary)", borderRadius:14, padding:"1.75rem" }}>
+        {fields.map(f => (
+          <div key={f.key} style={{ marginBottom:16 }}>
+            <label style={{ display:"block", fontSize:13, fontWeight:500, color:"var(--color-text-primary)", marginBottom:6 }}>{f.label}</label>
+            <input type={f.type} value={form[f.key]} placeholder={f.placeholder}
+              onChange={e=>{ setForm(p=>({...p,[f.key]:e.target.value})); setErrors(er=>({...er,[f.key]:undefined})); }}
+              style={{ width:"100%", padding:"10px 12px", borderRadius:8, border: errors[f.key] ? "1px solid #e24b4a" : "0.5px solid var(--color-border-secondary)", background:"var(--color-background-primary)", color:"var(--color-text-primary)", fontSize:14, boxSizing:"border-box" }} />
+            {errors[f.key] && <span style={{ fontSize:12, color:"#a32d2d", marginTop:4, display:"block" }}>{errors[f.key]}</span>}
+          </div>
+        ))}
+        <div style={{ marginBottom:20 }}>
+          <label style={{ display:"block", fontSize:13, fontWeight:500, color:"var(--color-text-primary)", marginBottom:6 }}>Description <span style={{ color:"var(--color-text-secondary)", fontWeight:400 }}>(optional)</span></label>
+          <textarea value={form.description} onChange={e=>setForm(p=>({...p,description:e.target.value}))} rows={3} placeholder="Product description…"
+            style={{ width:"100%", padding:"10px 12px", borderRadius:8, border:"0.5px solid var(--color-border-secondary)", background:"var(--color-background-primary)", color:"var(--color-text-primary)", fontSize:14, boxSizing:"border-box", resize:"vertical", fontFamily:"inherit" }} />
+        </div>
+        <div style={{ display:"flex", gap:12 }}>
+          <button onClick={() => navigate("/products")} style={{ flex:1, padding:"10px 0", borderRadius:8, border:"0.5px solid var(--color-border-secondary)", background:"transparent", color:"var(--color-text-secondary)", cursor:"pointer", fontSize:14 }}>Discard</button>
+          <button onClick={handleSubmit} disabled={saving}
+            style={{ flex:2, padding:"10px 0", borderRadius:8, border:"none", background:"#534AB7", color:"#fff", cursor:"pointer", fontSize:14, fontWeight:500, opacity:saving?0.7:1 }}>
+            {saving ? "Adding…" : "Add product"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── E-commerce Insights Screen ───────────────────────────────────────────────
+function EcommerceScreen() {
+  const { timeRange, productsList } = useDashboard();
+  const donutRef = useRef(null);
+  const donutChart = useRef(null);
+
+  const timeLabels = { "12months":"12 months","30days":"30 days","7days":"7 days","24hours":"24 hours" };
+  const devices = [
+    { label:"Desktop", value:54, color:"#534AB7" },
+    { label:"Mobile", value:33, color:"#1d9e75" },
+    { label:"Tablet", value:13, color:"#d85a30" },
+  ];
+
+  useEffect(() => {
+    if (!donutRef.current || !window.Chart) return;
+    if (donutChart.current) donutChart.current.destroy();
+    donutChart.current = new window.Chart(donutRef.current, {
+      type:"doughnut",
+      data:{ labels:devices.map(d=>d.label), datasets:[{ data:devices.map(d=>d.value), backgroundColor:devices.map(d=>d.color), borderWidth:0, hoverOffset:6 }] },
+      options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:false } }, cutout:"68%" }
+    });
+    return () => { if (donutChart.current) donutChart.current.destroy(); };
+  }, []);
+
+  const categoryMap = {};
+  productsList.forEach(p => {
+    if (!p.category) return;
+    if (!categoryMap[p.category]) categoryMap[p.category] = { total:0, count:0, stock:0 };
+    categoryMap[p.category].total += p.price || 0;
+    categoryMap[p.category].count += 1;
+    categoryMap[p.category].stock += p.stock || 0;
+  });
+  const categories = Object.entries(categoryMap)
+    .map(([cat, d]) => ({ cat, avgPrice:(d.total/d.count).toFixed(2), count:d.count, stock:d.stock }))
+    .sort((a,b) => b.stock - a.stock)
+    .slice(0, 8);
+
+  return (
+    <div style={{ padding:"2rem", maxWidth:1100 }}>
+      <h2 style={{ margin:"0 0 0.25rem", fontSize:22, fontWeight:500, color:"var(--color-text-primary)" }}>E-commerce insights</h2>
+      <p style={{ margin:"0 0 1rem", color:"var(--color-text-secondary)", fontSize:14 }}>Session analysis and category performance</p>
+
+      {/* Context Banner */}
+      {timeRange !== "12months" && (
+        <div style={{ background:"#e6f1fb", border:"1px solid #85b7eb", borderRadius:8, padding:"10px 16px", fontSize:13, color:"#185fa5", marginBottom:"1.5rem", display:"flex", alignItems:"center", gap:8 }}>
+          <i className="ti ti-info-circle" style={{ fontSize:16 }} aria-hidden="true" />
+          Displaying insights optimized for the last {timeLabels[timeRange]}.
+        </div>
+      )}
+
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:16, marginBottom:"2rem" }}>
+        {/* Donut Chart */}
+        <div style={{ background:"var(--color-background-primary)", border:"0.5px solid var(--color-border-tertiary)", borderRadius:12, padding:"1.25rem" }}>
+          <h3 style={{ margin:"0 0 1rem", fontSize:15, fontWeight:500 }}>Sessions by device</h3>
+          <div style={{ display:"flex", alignItems:"center", gap:24 }}>
+            <div style={{ position:"relative", width:160, height:160, flexShrink:0 }}>
+              <canvas ref={donutRef} role="img" aria-label="Doughnut chart: Desktop 54%, Mobile 33%, Tablet 13%" />
+            </div>
+            <div style={{ flex:1 }}>
+              {devices.map(d => (
+                <div key={d.label} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
+                  <span style={{ display:"flex", alignItems:"center", gap:8, fontSize:13, color:"var(--color-text-secondary)" }}>
+                    <span style={{ width:10, height:10, borderRadius:2, background:d.color, display:"inline-block" }} />{d.label}
+                  </span>
+                  <span style={{ fontSize:15, fontWeight:500, color:"var(--color-text-primary)" }}>{d.value}%</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Session KPIs */}
+        <div style={{ background:"var(--color-background-primary)", border:"0.5px solid var(--color-border-tertiary)", borderRadius:12, padding:"1.25rem" }}>
+          <h3 style={{ margin:"0 0 1rem", fontSize:15, fontWeight:500 }}>Session metrics</h3>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+            {[
+              { label:"Avg session", value:"4m 12s", icon:"ti-clock", bg:"#eeedfe", color:"#534AB7" },
+              { label:"Conversion", value:"3.8%", icon:"ti-trending-up", bg:"#e1f5ee", color:"#1d9e75" },
+              { label:"Cart abandon", value:"62.4%", icon:"ti-shopping-cart-off", bg:"#faece7", color:"#d85a30" },
+              { label:"Return users", value:"41%", icon:"ti-refresh", bg:"#e6f1fb", color:"#185fa5" },
+            ].map(m => (
+              <div key={m.label} style={{ background:"var(--color-background-secondary)", borderRadius:8, padding:"0.875rem" }}>
+                <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6 }}>
+                  <span style={{ background:m.bg, color:m.color, width:28, height:28, borderRadius:6, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                    <i className={`ti ${m.icon}`} style={{ fontSize:14 }} aria-hidden="true" />
+                  </span>
+                  <span style={{ fontSize:11, color:"var(--color-text-secondary)" }}>{m.label}</span>
+                </div>
+                <div style={{ fontSize:20, fontWeight:500 }}>{m.value}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Category Performance */}
+      <div style={{ background:"var(--color-background-primary)", border:"0.5px solid var(--color-border-tertiary)", borderRadius:12, overflow:"hidden" }}>
+        <div style={{ padding:"1rem 1.25rem", borderBottom:"0.5px solid var(--color-border-tertiary)" }}>
+          <h3 style={{ margin:0, fontSize:15, fontWeight:500 }}>Category performance</h3>
+          <p style={{ margin:"4px 0 0", fontSize:12, color:"var(--color-text-secondary)" }}>Derived from live product catalogue</p>
+        </div>
+        {categories.length === 0 ? (
+          <div style={{ padding:"2rem", textAlign:"center", color:"var(--color-text-secondary)", fontSize:14 }}>No product data loaded yet. Visit the Products screen first.</div>
+        ) : (
+          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
+            <thead>
+              <tr style={{ background:"var(--color-background-secondary)" }}>
+                {["Category","Products","Avg Price","Total Stock","Stock bar"].map(h=>(
+                  <th key={h} style={{ padding:"10px 16px", textAlign:"left", color:"var(--color-text-secondary)", fontWeight:500, fontSize:12, borderBottom:"0.5px solid var(--color-border-tertiary)" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {categories.map((c, i) => {
+                const maxStock = Math.max(...categories.map(x=>x.stock));
+                const pct = Math.round((c.stock/maxStock)*100);
+                return (
+                  <tr key={c.cat} style={{ borderBottom:"0.5px solid var(--color-border-tertiary)" }}>
+                    <td style={{ padding:"12px 16px", fontWeight:500, textTransform:"capitalize" }}>{c.cat}</td>
+                    <td style={{ padding:"12px 16px", color:"var(--color-text-secondary)" }}>{c.count}</td>
+                    <td style={{ padding:"12px 16px", color:"#534AB7", fontWeight:500 }}>${c.avgPrice}</td>
+                    <td style={{ padding:"12px 16px" }}>{c.stock}</td>
+                    <td style={{ padding:"12px 16px", minWidth:120 }}>
+                      <div style={{ height:6, background:"var(--color-background-secondary)", borderRadius:3, overflow:"hidden" }}>
+                        <div style={{ height:"100%", width:`${pct}%`, background:"#534AB7", borderRadius:3 }} />
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Logistics Screen ─────────────────────────────────────────────────────────
+function LogisticsScreen() {
+  const { logisticsFilter, setLogisticsFilter } = useDashboard();
+
+  const statusCounts = {
+    all: SHIPMENTS.length,
+    Delivered: SHIPMENTS.filter(s=>s.status==="Delivered").length,
+    "In Transit": SHIPMENTS.filter(s=>s.status==="In Transit").length,
+    Delayed: SHIPMENTS.filter(s=>s.status==="Delayed").length,
+  };
+
+  const filtered = logisticsFilter === "all" ? SHIPMENTS : SHIPMENTS.filter(s => s.status === logisticsFilter);
+
+  const filterCards = [
+    { key:"all", label:"All shipments", count:statusCounts.all, bg:"#f1efe8", color:"#2c2c2a", border:"#b4b2a9", icon:"ti-package" },
+    { key:"Delivered", label:"Delivered", count:statusCounts.Delivered, bg:"#eaf3de", color:"#3b6d11", border:"#97c459", icon:"ti-circle-check" },
+    { key:"In Transit", label:"In transit", count:statusCounts["In Transit"], bg:"#e6f1fb", color:"#185fa5", border:"#85b7eb", icon:"ti-truck" },
+    { key:"Delayed", label:"Delayed", count:statusCounts.Delayed, bg:"#fcebeb", color:"#a32d2d", border:"#f09595", icon:"ti-alert-triangle" },
+  ];
+
+  return (
+    <div style={{ padding:"2rem", maxWidth:1100 }}>
+      <h2 style={{ margin:"0 0 0.25rem", fontSize:22, fontWeight:500, color:"var(--color-text-primary)" }}>Logistics</h2>
+      <p style={{ margin:"0 0 1.5rem", color:"var(--color-text-secondary)", fontSize:14 }}>Shipment tracking and carrier matrix</p>
+
+      {/* Filter Cards */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12, marginBottom:"1.5rem" }}>
+        {filterCards.map(f => (
+          <button key={f.key} onClick={() => setLogisticsFilter(f.key)}
+            style={{ background: logisticsFilter===f.key ? f.bg : "var(--color-background-primary)", border: logisticsFilter===f.key ? `2px solid ${f.border}` : "0.5px solid var(--color-border-tertiary)", borderRadius:10, padding:"1rem", cursor:"pointer", textAlign:"left", transition:"all 0.15s" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8 }}>
+              <span style={{ color: logisticsFilter===f.key ? f.color : "var(--color-text-secondary)" }}>
+                <i className={`ti ${f.icon}`} style={{ fontSize:18 }} aria-hidden="true" />
+              </span>
+              <span style={{ fontSize:12, color: logisticsFilter===f.key ? f.color : "var(--color-text-secondary)" }}>{f.label}</span>
+            </div>
+            <div style={{ fontSize:26, fontWeight:500, color: logisticsFilter===f.key ? f.color : "var(--color-text-primary)" }}>{f.count}</div>
+          </button>
+        ))}
+      </div>
+
+      {logisticsFilter === "Delayed" && (
+        <div style={{ background:"#fcebeb", border:"1px solid #f09595", borderRadius:8, padding:"10px 16px", fontSize:13, color:"#a32d2d", marginBottom:"1.25rem", display:"flex", alignItems:"center", gap:8 }}>
+          <i className="ti ti-alert-triangle" style={{ fontSize:16 }} aria-hidden="true" />
+          Showing {statusCounts.Delayed} delayed shipments — review carrier escalation protocols.
+        </div>
+      )}
+
+      {/* Tracking Table */}
+      <div style={{ background:"var(--color-background-primary)", border:"0.5px solid var(--color-border-tertiary)", borderRadius:12, overflow:"hidden" }}>
+        <div style={{ padding:"1rem 1.25rem", borderBottom:"0.5px solid var(--color-border-tertiary)", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+          <h3 style={{ margin:0, fontSize:15, fontWeight:500 }}>Tracking matrix</h3>
+          <span style={{ fontSize:13, color:"var(--color-text-secondary)" }}>{filtered.length} shipments</span>
+        </div>
+        <div style={{ overflowX:"auto" }}>
+          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
+            <thead>
+              <tr style={{ background:"var(--color-background-secondary)" }}>
+                {["Shipment ID","Product","Origin","Destination","Carrier","ETA","Weight","Status"].map(h=>(
+                  <th key={h} style={{ padding:"10px 16px", textAlign:"left", color:"var(--color-text-secondary)", fontWeight:500, fontSize:12, borderBottom:"0.5px solid var(--color-border-tertiary)", whiteSpace:"nowrap" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map(s => (
+                <tr key={s.id} style={{ borderBottom:"0.5px solid var(--color-border-tertiary)" }}>
+                  <td style={{ padding:"12px 16px", fontWeight:500, color:"#534AB7", whiteSpace:"nowrap" }}>{s.id}</td>
+                  <td style={{ padding:"12px 16px", maxWidth:160, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{s.product}</td>
+                  <td style={{ padding:"12px 16px", color:"var(--color-text-secondary)", whiteSpace:"nowrap" }}>{s.origin}</td>
+                  <td style={{ padding:"12px 16px", color:"var(--color-text-secondary)", whiteSpace:"nowrap" }}>{s.destination}</td>
+                  <td style={{ padding:"12px 16px" }}>{s.carrier}</td>
+                  <td style={{ padding:"12px 16px", whiteSpace:"nowrap" }}>{s.eta}</td>
+                  <td style={{ padding:"12px 16px", color:"var(--color-text-secondary)" }}>{s.weight}</td>
+                  <td style={{ padding:"12px 16px" }}><Badge status={s.status} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── App Shell ────────────────────────────────────────────────────────────────
+function AppShell() {
+  const { path, navigate } = useRouter();
+
+  const renderScreen = () => {
+    if (path === "/" || path === "") return <AnalyticsScreen navigate={navigate} />;
+    if (path === "/products") return <ProductsScreen navigate={navigate} />;
+    if (path === "/add-product") return <AddProductScreen navigate={navigate} />;
+    if (path === "/ecommerce") return <EcommerceScreen />;
+    if (path === "/logistics") return <LogisticsScreen />;
+    return <AnalyticsScreen navigate={navigate} />;
+  };
+
+  return (
+    <div style={{ display:"flex", minHeight:"100vh", background:"var(--color-background-tertiary)", fontFamily:"var(--font-sans)" }}>
+      <Sidebar path={path} navigate={navigate} />
+      <main style={{ flex:1, overflowY:"auto", overflowX:"hidden" }}>
+        {renderScreen()}
+      </main>
+      <GlobalNotification />
+    </div>
+  );
+}
+
+// ─── Root ─────────────────────────────────────────────────────────────────────
+export default function App() {
+  return (
+    <DashboardProvider>
+      <AppShell />
+    </DashboardProvider>
+  );
+}
