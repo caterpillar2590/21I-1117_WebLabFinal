@@ -1,0 +1,6 @@
+router.delete(
+"/catalog/:id",
+auth,
+authorize("admin"),
+deleteBook
+);
